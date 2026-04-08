@@ -1,15 +1,17 @@
-package main
+package download
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
+
+	"foxstream-bridge/internal/ffmpeg"
+	"foxstream-bridge/internal/protocol"
 )
 
-const version = "2.0.0"
+const Version = "2.0.0"
 
-// downloadTracker manages active downloads and their cancel channels.
 type downloadTracker struct {
 	mu      sync.Mutex
 	cancels map[string]chan struct{}
@@ -44,20 +46,20 @@ func (dt *downloadTracker) done(id string) {
 	delete(dt.cancels, id)
 }
 
-// router reads messages from the extension and dispatches by action type.
-func router(in io.Reader, out io.Writer) {
+// Router reads messages from the extension and dispatches by action type.
+func Router(in io.Reader, out io.Writer) {
 	pw := newProgressWriter(out)
 	dt := newDownloadTracker()
 
 	for {
-		raw, err := readMessage(in)
+		raw, err := protocol.ReadMessage(in)
 		if err != nil {
 			return
 		}
 
-		var msg IncomingMessage
+		var msg protocol.IncomingMessage
 		if err := json.Unmarshal(raw, &msg); err != nil {
-			sendJSON(out, ErrorMessage{
+			sendJSON(out, protocol.ErrorMessage{
 				Type:    "error",
 				Message: fmt.Sprintf("Invalid JSON: %v", err),
 			})
@@ -66,8 +68,8 @@ func router(in io.Reader, out io.Writer) {
 
 		switch msg.Action {
 		case "ping":
-			info, hasFF := hasFFmpeg()
-			pong := PongMessage{Type: "pong", Version: version}
+			info, hasFF := ffmpeg.HasFFmpeg()
+			pong := protocol.PongMessage{Type: "pong", Version: Version}
 			if hasFF {
 				pong.FFmpeg = info
 			}
@@ -84,7 +86,7 @@ func router(in io.Reader, out io.Writer) {
 			dt.cancel(msg.ID)
 
 		default:
-			sendJSON(out, ErrorMessage{
+			sendJSON(out, protocol.ErrorMessage{
 				Type:    "error",
 				ID:      msg.ID,
 				Message: fmt.Sprintf("Unknown action: %s", msg.Action),
@@ -98,11 +100,10 @@ func sendJSON(w io.Writer, v any) {
 	if err != nil {
 		return
 	}
-	writeMessage(w, data)
+	protocol.WriteMessage(w, data)
 }
 
-// handleDownload dispatches to the correct download path based on stream type.
-func handleDownload(msg IncomingMessage, pw *progressWriter, cancel <-chan struct{}) {
+func handleDownload(msg protocol.IncomingMessage, pw *progressWriter, cancel <-chan struct{}) {
 	switch msg.StreamType {
 	case "mp4", "webm", "mov":
 		downloadDirect(msg, pw, cancel)

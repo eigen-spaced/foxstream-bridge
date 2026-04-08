@@ -1,4 +1,4 @@
-package main
+package protocol
 
 // Inbound messages (extension -> bridge)
 

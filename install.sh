@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Building foxstream-bridge..."
 cd "$SCRIPT_DIR"
-go build -o foxstream-bridge .
+go build -o foxstream-bridge ./cmd/foxstream-bridge
 
 echo "Installing binary to $INSTALL_DIR..."
 sudo cp foxstream-bridge "$INSTALL_DIR/"

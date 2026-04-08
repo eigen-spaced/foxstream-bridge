@@ -1,4 +1,4 @@
-package main
+package download
 
 import (
 	"encoding/json"
@@ -6,40 +6,35 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"foxstream-bridge/internal/protocol"
 )
 
-// progressWriter wraps an io.Writer (stdout) and provides throttled progress reporting.
 type progressWriter struct {
-	out      io.Writer
-	mu       sync.Mutex
-	throttle time.Duration
-	lastSend time.Time
+	mu   sync.Mutex
+	out  io.Writer
+	last map[string]time.Time
 }
 
 func newProgressWriter(out io.Writer) *progressWriter {
 	return &progressWriter{
-		out:      out,
-		throttle: 250 * time.Millisecond,
+		out:  out,
+		last: make(map[string]time.Time),
 	}
 }
 
-// sendProgress sends a progress message, throttled to avoid flooding the extension.
-// force=true bypasses throttling (used for final updates).
 func (pw *progressWriter) sendProgress(id, phase string, percent int, bytesDownloaded int64, speed string, force bool) {
 	pw.mu.Lock()
 	defer pw.mu.Unlock()
 
-	now := time.Now()
-	if !force && now.Sub(pw.lastSend) < pw.throttle {
-		return
+	if !force {
+		if t, ok := pw.last[id]; ok && time.Since(t) < 250*time.Millisecond {
+			return
+		}
 	}
-	pw.lastSend = now
+	pw.last[id] = time.Now()
 
-	if percent > 100 {
-		percent = 100
-	}
-
-	msg := ProgressMessage{
+	msg := protocol.ProgressMessage{
 		Type:            "progress",
 		ID:              id,
 		Phase:           phase,
@@ -47,44 +42,38 @@ func (pw *progressWriter) sendProgress(id, phase string, percent int, bytesDownl
 		BytesDownloaded: bytesDownloaded,
 		Speed:           speed,
 	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-	writeMessage(pw.out, data)
+	data, _ := json.Marshal(msg)
+	protocol.WriteMessage(pw.out, data)
 }
 
 func (pw *progressWriter) sendComplete(id, path string, size int64) {
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-
-	msg := CompleteMessage{
+	msg := protocol.CompleteMessage{
 		Type: "complete",
 		ID:   id,
 		Path: path,
 		Size: size,
 	}
 	data, _ := json.Marshal(msg)
-	writeMessage(pw.out, data)
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+	protocol.WriteMessage(pw.out, data)
 }
 
 func (pw *progressWriter) sendError(id, message, phase string) {
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-
-	msg := ErrorMessage{
+	msg := protocol.ErrorMessage{
 		Type:    "error",
 		ID:      id,
 		Message: message,
 		Phase:   phase,
 	}
 	data, _ := json.Marshal(msg)
-	writeMessage(pw.out, data)
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+	protocol.WriteMessage(pw.out, data)
 }
 
-// formatSpeed returns a human-readable speed string.
-func formatSpeed(bytesPerSec float64) string {
+// FormatSpeed formats bytes per second as a human-readable string.
+func FormatSpeed(bytesPerSec float64) string {
 	switch {
 	case bytesPerSec >= 1024*1024:
 		return fmt.Sprintf("%.1f MB/s", bytesPerSec/(1024*1024))
