@@ -1,0 +1,5 @@
+foxstream-bridge
+testclient
+cmd/testclient/testclient
+*.exe
+.DS_Store
