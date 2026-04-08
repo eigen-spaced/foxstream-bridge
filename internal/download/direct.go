@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"foxstream-bridge/internal/config"
+	"foxstream-bridge/internal/ffmpeg"
 	"foxstream-bridge/internal/protocol"
 )
 
 func downloadDirect(msg protocol.IncomingMessage, pw *progressWriter, cancel <-chan struct{}) {
-	outPath := config.OutputPath(msg.Title, msg.StreamType)
+	outputFormat := ffmpeg.ResolveOutputFormat(msg.OutputFormat)
+	needsConvert := outputFormat != msg.StreamType
+	outPath := config.OutputPath(msg.Title, outputFormat)
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
@@ -115,10 +118,45 @@ func downloadDirect(msg protocol.IncomingMessage, pw *progressWriter, cancel <-c
 
 	f.Close()
 
-	if err := os.Rename(partPath, outPath); err != nil {
+	// If format conversion is needed, transcode; otherwise just rename
+	if needsConvert {
+		ffmpegPath := config.FindFFmpeg()
+		if ffmpegPath == "" {
+			os.Remove(partPath)
+			pw.sendError(msg.ID, "FFmpeg required for format conversion. Install FFmpeg to download in this format.", "download")
+			return
+		}
+
+		pw.sendProgress(msg.ID, "muxing", 90, downloaded, "", true)
+
+		codecArgs, extraArgs := ffmpeg.FormatArgs(outputFormat, false)
+		args := []string{"-i", partPath}
+		args = append(args, codecArgs...)
+		args = append(args, extraArgs...)
+		args = append(args, "-y", outPath)
+
+		err := ffmpeg.RunWithProgress(args, msg.DurationSeconds, cancel,
+			func(pct int) {
+				muxPct := 90 + pct/10
+				pw.sendProgress(msg.ID, "muxing", muxPct, downloaded, "", false)
+			})
 		os.Remove(partPath)
-		pw.sendError(msg.ID, fmt.Sprintf("Cannot rename file: %v", err), "download")
-		return
+		if err != nil {
+			if isCancelled(cancel) {
+				os.Remove(outPath)
+				pw.sendError(msg.ID, "Download cancelled.", "muxing")
+			} else {
+				os.Remove(outPath)
+				pw.sendError(msg.ID, fmt.Sprintf("Format conversion failed: %v", err), "muxing")
+			}
+			return
+		}
+	} else {
+		if err := os.Rename(partPath, outPath); err != nil {
+			os.Remove(partPath)
+			pw.sendError(msg.ID, fmt.Sprintf("Cannot rename file: %v", err), "download")
+			return
+		}
 	}
 
 	fi, _ := os.Stat(outPath)

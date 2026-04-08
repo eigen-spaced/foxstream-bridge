@@ -16,6 +16,7 @@ type IncomingMessage struct {
 	SelectedQuality string            `json:"selectedQuality,omitempty"`
 	Cookies         string            `json:"cookies,omitempty"`
 	Headers         map[string]string `json:"headers,omitempty"`
+	OutputFormat    string            `json:"outputFormat,omitempty"`
 	ContentLength   int64             `json:"contentLength,omitempty"`
 }
 

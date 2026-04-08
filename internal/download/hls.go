@@ -21,7 +21,8 @@ func downloadHLS(msg protocol.IncomingMessage, pw *progressWriter, cancel <-chan
 }
 
 func downloadHLSMuxed(msg protocol.IncomingMessage, pw *progressWriter, cancel <-chan struct{}) {
-	outPath := config.OutputPath(msg.Title, "mp4")
+	outputFormat := ffmpeg.ResolveOutputFormat(msg.OutputFormat)
+	outPath := config.OutputPath(msg.Title, outputFormat)
 
 	playlistURL := msg.URL
 	if msg.SelectedQuality != "" || len(msg.Qualities) > 0 {
@@ -73,10 +74,18 @@ func downloadHLSMuxed(msg protocol.IncomingMessage, pw *progressWriter, cancel <
 			pw.sendError(msg.ID, fmt.Sprintf("Cannot create output dir: %v", err), "muxing")
 			return
 		}
-		err := ffmpeg.RemuxToMP4(concatPath, outPath, msg.DurationSeconds, func(pct int) {
-			muxPct := 90 + pct/10
-			pw.sendProgress(msg.ID, "muxing", muxPct, totalBytes, "", false)
-		})
+
+		codecArgs, extraArgs := ffmpeg.FormatArgs(outputFormat, true)
+		args := []string{"-i", concatPath}
+		args = append(args, codecArgs...)
+		args = append(args, extraArgs...)
+		args = append(args, "-y", outPath)
+
+		err := ffmpeg.RunWithProgress(args, msg.DurationSeconds, cancel,
+			func(pct int) {
+				muxPct := 90 + pct/10
+				pw.sendProgress(msg.ID, "muxing", muxPct, totalBytes, "", false)
+			})
 		if err != nil {
 			if isCancelled(cancel) {
 				os.Remove(outPath)
@@ -111,7 +120,8 @@ func downloadHLSDemuxed(msg protocol.IncomingMessage, pw *progressWriter, cancel
 		return
 	}
 
-	outPath := config.OutputPath(msg.Title, "mp4")
+	outputFormat := ffmpeg.ResolveOutputFormat(msg.OutputFormat)
+	outPath := config.OutputPath(msg.Title, outputFormat)
 
 	qualities := toHLSQualities(msg.Qualities)
 	videoPLURL, audioPLURL, err := hls.ParseDemuxedPair(msg.URL, msg.SelectedQuality, qualities, msg.Headers, msg.Cookies)
@@ -133,15 +143,11 @@ func downloadHLSDemuxed(msg protocol.IncomingMessage, pw *progressWriter, cancel
 		args = append(args, "-headers", headerStr)
 	}
 
-	args = append(args,
-		"-i", videoPLURL,
-		"-i", audioPLURL,
-		"-c:v", "copy",
-		"-c:a", "copy",
-		"-movflags", "+faststart",
-		"-y",
-		outPath,
-	)
+	codecArgs, extraArgs := ffmpeg.FormatArgs(outputFormat, true)
+	args = append(args, "-i", videoPLURL, "-i", audioPLURL)
+	args = append(args, codecArgs...)
+	args = append(args, extraArgs...)
+	args = append(args, "-y", outPath)
 
 	err = ffmpeg.RunWithProgress(args, msg.DurationSeconds, cancel,
 		func(pct int) {
