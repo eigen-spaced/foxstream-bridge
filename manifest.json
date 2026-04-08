@@ -1,0 +1,7 @@
+{
+  "name": "foxstream_bridge",
+  "description": "FoxStream video download bridge",
+  "path": "/usr/local/bin/foxstream-bridge",
+  "type": "stdio",
+  "allowed_extensions": ["foxstream@extension"]
+}
